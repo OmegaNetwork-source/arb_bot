@@ -20,8 +20,13 @@ export interface JupiterClientConfig {
 export class JupiterClient {
   private client: AxiosInstance;
   private priceClient: AxiosInstance;
+  /** Enforces Jupiter free-tier limit of 1 request/second */
+  private lastRequestAt = 0;
+  private readonly minIntervalMs: number;
 
   constructor(private readonly cfg: JupiterClientConfig) {
+    // Free tier = 1 RPS; paid tier can push this lower (e.g. 50ms = 20 RPS)
+    this.minIntervalMs = cfg.apiKey ? 100 : 1_100;
     const authHeaders = cfg.apiKey ? { 'x-api-key': cfg.apiKey } : {};
 
     this.client = axios.create({
@@ -41,6 +46,13 @@ export class JupiterClient {
       retryDelay: (count) => count * 300,
       retryCondition: (err) => !err.response || err.response.status >= 500,
     });
+  }
+
+  /** Wait until the minimum inter-request interval has passed */
+  private async throttle(): Promise<void> {
+    const wait = this.minIntervalMs - (Date.now() - this.lastRequestAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    this.lastRequestAt = Date.now();
   }
 
   /**
@@ -67,6 +79,7 @@ export class JupiterClient {
       params.dexes = jupiterLabel;
     }
 
+    await this.throttle();
     try {
       const resp = await this.client.get<JupiterQuoteResponse>('/quote', { params });
       return resp.data;

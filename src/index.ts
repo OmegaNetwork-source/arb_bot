@@ -23,6 +23,7 @@ import { Token, ArbitrageOpportunity } from './types';
 import * as dashboardState from './dashboard/state';
 import { startDashboardServer } from './dashboard/server';
 import { SUPPORTED_DEXES, WSOL_MINT } from './config/constants';
+import { getTokensDexPrices, getSolPriceFromDexScreener } from './scanner/dexscreener';
 import type { TokenDexPriceRow } from './dashboard/state';
 
 // ── Init logging ─────────────────────────────────────────────
@@ -205,47 +206,30 @@ async function main(): Promise<void> {
   // ── Dashboard ──────────────────────────────────────────────
   startDashboardServer(config.dashboardPort);
 
-  /** Refresh token-vs-DEX prices from Jupiter (so dashboard has full DEX coverage) */
-  const DASHBOARD_PRICE_REFRESH_MS = 90_000;
-  const QUOTE_AMOUNT_SOL = 0.01;
-  const QUOTE_AMOUNT_LAMPORTS = BigInt(Math.round(QUOTE_AMOUNT_SOL * 1e9));
+  /** Refresh token-vs-DEX prices from DexScreener pair data (no Jupiter rate limits) */
+  const DASHBOARD_PRICE_REFRESH_MS = 60_000;
 
   async function refreshDashboardTokenPrices(): Promise<void> {
     const tokens = scanner.getWatchlist();
     if (tokens.length === 0) return;
-    let solPriceUsd: number;
+
+    const mints = tokens.map((t) => t.mint);
+    let dexPriceMap: Map<string, Map<string, number>>;
     try {
-      solPriceUsd = await dexAggregator.getSolPriceUsdc();
-    } catch {
+      dexPriceMap = await getTokensDexPrices(mints);
+    } catch (err) {
+      logger.warn('Dashboard price refresh failed', { error: String(err) });
       return;
     }
-    const enabledDexes = SUPPORTED_DEXES.filter((d) => d.enabled);
+
     const rows: TokenDexPriceRow[] = [];
-    // One token at a time to avoid Jupiter rate limits; 7 DEX quotes in parallel per token
     for (const token of tokens) {
+      const pricesByDex = dexPriceMap.get(token.mint) ?? new Map<string, number>();
       const prices: { dexId: string; priceUsd: number }[] = [];
-      const decimals = token.decimals ?? 6;
 
-      const quotePromises = enabledDexes.map(async (dex) => {
-        const quote = await dexAggregator.jupiter.getQuote(
-          WSOL_MINT,
-          token.mint,
-          QUOTE_AMOUNT_LAMPORTS,
-          dex.jupiterLabel,
-          false, // allow multi-hop routes for dashboard display
-        );
-        if (quote?.outAmount && BigInt(quote.outAmount) > 0n) {
-          const outAmount = Number(quote.outAmount);
-          const tokenAmountHuman = outAmount / Math.pow(10, decimals);
-          if (tokenAmountHuman > 0) {
-            const inputUsd = QUOTE_AMOUNT_SOL * solPriceUsd;
-            const priceUsd = inputUsd / tokenAmountHuman;
-            prices.push({ dexId: dex.name, priceUsd });
-          }
-        }
-      });
-
-      await Promise.all(quotePromises);
+      for (const [dexName, priceUsd] of pricesByDex) {
+        prices.push({ dexId: dexName, priceUsd });
+      }
 
       const usds = prices.map((p) => p.priceUsd);
       const minPriceUsd = usds.length ? Math.min(...usds) : 0;
@@ -254,30 +238,26 @@ async function main(): Promise<void> {
       const status: TokenDexPriceRow['status'] =
         spreadPct >= 2 ? 'Arb' : spreadPct >= 0.5 ? 'Spread' : '—';
 
-      rows.push({
-        token,
-        prices,
-        minPriceUsd,
-        maxPriceUsd,
-        spreadPct,
-        status,
-      });
-      await sleep(300);
+      rows.push({ token, prices, minPriceUsd, maxPriceUsd, spreadPct, status });
     }
 
     dashboardState.setTokenDexPrices(rows);
     const totalPrices = rows.reduce((n, r) => n + r.prices.length, 0);
-    logger.info(`Dashboard: Jupiter prices for ${rows.length} tokens, ${totalPrices} DEX quotes`);
+    logger.info(`Dashboard: DexScreener prices for ${rows.length} tokens, ${totalPrices} DEX price points`);
   }
 
   // ── Start everything ──────────────────────────────────────
   scanner.start();
 
-  // Warm up SOL price
+  // Warm up SOL price (CoinGecko → Jupiter → DexScreener → $150 fallback)
   await detector.refreshSolPrice();
-  const solPrice = await dexAggregator.getSolPriceUsdc();
+  let solPrice = await dexAggregator.getSolPriceUsdc();
+  if (solPrice === 150) {
+    const dsPrice = await getSolPriceFromDexScreener();
+    if (dsPrice) solPrice = dsPrice;
+  }
   dashboardState.setSolPriceUsd(solPrice);
-  logger.info('Initial SOL price fetched');
+  logger.info(`Initial SOL price: $${solPrice.toFixed(2)}`);
 
   // Main scan loop
   logger.info(`Starting price scan loop (interval: ${config.priceCheckIntervalMs}ms)`);
@@ -296,15 +276,19 @@ async function main(): Promise<void> {
   // Periodic metrics summary (every 5 minutes)
   setInterval(() => metrics.logSummary(), 5 * 60 * 1000);
 
-  // Refresh SOL price every 2 minutes and update dashboard
+  // Refresh SOL price every 2 minutes (CoinGecko → Jupiter → DexScreener → $150 fallback)
   setInterval(async () => {
     await detector.refreshSolPrice();
-    const price = await dexAggregator.getSolPriceUsdc();
+    let price = await dexAggregator.getSolPriceUsdc();
+    if (price === 150) {
+      const dsPrice = await getSolPriceFromDexScreener();
+      if (dsPrice) price = dsPrice;
+    }
     dashboardState.setSolPriceUsd(price);
   }, 2 * 60 * 1000);
 
-  // Dashboard token-vs-DEX prices from Jupiter (full DEX list, quote-based)
-  setTimeout(() => refreshDashboardTokenPrices(), 45_000);
+  // Dashboard token-vs-DEX prices from DexScreener (fast batch, no rate limit issues)
+  setTimeout(() => refreshDashboardTokenPrices(), 5_000);
   setInterval(refreshDashboardTokenPrices, DASHBOARD_PRICE_REFRESH_MS);
 
   logger.info('Bot is running. Press Ctrl+C to stop.');

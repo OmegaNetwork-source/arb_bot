@@ -1,9 +1,24 @@
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
 import { DexScreenerPair, DexScreenerResponse } from '../types';
-import { DEXSCREENER_API_BASE } from '../config/constants';
+import { DEXSCREENER_API_BASE, WSOL_MINT, USDC_MINT } from '../config/constants';
 import { logger } from '../utils/logger';
 import { chunk, sleep } from '../utils/helpers';
+
+/**
+ * Maps DexScreener dexId values to our canonical DEX display names.
+ * These are the actual dexId strings DexScreener returns for Solana.
+ */
+const DEXSCREENER_ID_TO_NAME: Record<string, string> = {
+  orca:          'Orca Whirlpools',
+  raydium:       'Raydium AMM',
+  'raydium-clmm': 'Raydium CLMM',
+  'meteora-dlmm': 'Meteora DLMM',
+  meteora:       'Meteora AMM',
+  'lifinity-v2': 'Lifinity V2',
+  lifinity:      'Lifinity V2',
+  phoenix:       'Phoenix',
+};
 
 axiosRetry(axios, { retries: 3, retryDelay: axiosRetry.exponentialDelay });
 
@@ -144,4 +159,79 @@ export function pairToToken(pair: DexScreenerPair) {
     priceUsd: pair.priceUsd ? parseFloat(pair.priceUsd) : undefined,
     volume24hUsd: pair.volume?.h24,
   };
+}
+
+/**
+ * Batch-fetch per-DEX prices for a list of token mints directly from
+ * DexScreener pair data. No Jupiter API calls required.
+ *
+ * Returns: mint → (dexName → priceUsd)
+ * Only includes pairs whose quote token is SOL or USDC (cleanest pricing).
+ * When a token has multiple pools on the same DEX, the highest-liquidity one wins.
+ */
+export async function getTokensDexPrices(
+  mints: string[],
+): Promise<Map<string, Map<string, number>>> {
+  const result = new Map<string, Map<string, number>>();
+  const liquidityTracker = new Map<string, Map<string, number>>();
+
+  const pairs = await getTokenPairs(mints);
+
+  for (const pair of pairs) {
+    if (!pair.priceUsd) continue;
+
+    const dexName = DEXSCREENER_ID_TO_NAME[pair.dexId];
+    if (!dexName) continue;
+
+    // Only price vs SOL or USDC quote tokens for clean USD pricing
+    const quoteAddr = pair.quoteToken.address;
+    const isRelevantQuote =
+      quoteAddr === WSOL_MINT ||
+      quoteAddr === USDC_MINT ||
+      pair.quoteToken.symbol === 'SOL' ||
+      pair.quoteToken.symbol === 'USDC';
+    if (!isRelevantQuote) continue;
+
+    const mint = pair.baseToken.address;
+    if (!result.has(mint)) {
+      result.set(mint, new Map());
+      liquidityTracker.set(mint, new Map());
+    }
+
+    const dexPrices = result.get(mint)!;
+    const dexLiquidity = liquidityTracker.get(mint)!;
+
+    const priceUsd = parseFloat(pair.priceUsd);
+    const liquidity = pair.liquidity?.usd ?? 0;
+
+    // Keep the highest-liquidity pool per DEX
+    if (liquidity > (dexLiquidity.get(dexName) ?? -1)) {
+      dexPrices.set(dexName, priceUsd);
+      dexLiquidity.set(dexName, liquidity);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get current SOL price in USD from DexScreener (SOL/USDC pair).
+ * Used as a fallback when CoinGecko / Jupiter price APIs are unavailable.
+ */
+export async function getSolPriceFromDexScreener(): Promise<number | null> {
+  try {
+    const pairs = await getTokenPairs([WSOL_MINT]);
+    // Find the highest-liquidity SOL/USDC pair
+    const solUsdcPairs = pairs.filter(
+      (p) =>
+        p.quoteToken.address === USDC_MINT &&
+        p.priceUsd &&
+        (p.liquidity?.usd ?? 0) > 100_000,
+    );
+    if (solUsdcPairs.length === 0) return null;
+    solUsdcPairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+    return parseFloat(solUsdcPairs[0].priceUsd!);
+  } catch {
+    return null;
+  }
 }
