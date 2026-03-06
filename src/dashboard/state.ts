@@ -9,7 +9,7 @@ const MAX_RECENT = 100;
 export interface DexPrice {
   dexId: string;
   priceUsd: number;
-  priceNative?: string;
+  liquidityUsd: number;
 }
 
 /** One row for the token-vs-DEX price table */

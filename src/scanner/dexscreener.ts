@@ -161,24 +161,35 @@ export function pairToToken(pair: DexScreenerPair) {
   };
 }
 
+export interface PoolPrice {
+  priceUsd: number;
+  liquidityUsd: number;
+}
+
 /**
  * Batch-fetch per-DEX prices for a list of token mints directly from
  * DexScreener pair data. No Jupiter API calls required.
  *
- * Returns: mint → (dexName → priceUsd)
- * Only includes pairs whose quote token is SOL or USDC (cleanest pricing).
- * When a token has multiple pools on the same DEX, the highest-liquidity one wins.
+ * Returns: mint → (dexName → PoolPrice)
+ *
+ * Rules:
+ *  - Only SOL or USDC quote pairs (clean USD pricing)
+ *  - Only pools with at least `minLiquidityUsd` (default $200K)
+ *  - When a token has multiple pools on the same DEX, the highest-liquidity one wins
  */
 export async function getTokensDexPrices(
   mints: string[],
-): Promise<Map<string, Map<string, number>>> {
-  const result = new Map<string, Map<string, number>>();
-  const liquidityTracker = new Map<string, Map<string, number>>();
+  minLiquidityUsd = 200_000,
+): Promise<Map<string, Map<string, PoolPrice>>> {
+  const result = new Map<string, Map<string, PoolPrice>>();
 
   const pairs = await getTokenPairs(mints);
 
   for (const pair of pairs) {
     if (!pair.priceUsd) continue;
+
+    const liquidity = pair.liquidity?.usd ?? 0;
+    if (liquidity < minLiquidityUsd) continue;
 
     const dexName = DEXSCREENER_ID_TO_NAME[pair.dexId];
     if (!dexName) continue;
@@ -193,21 +204,14 @@ export async function getTokensDexPrices(
     if (!isRelevantQuote) continue;
 
     const mint = pair.baseToken.address;
-    if (!result.has(mint)) {
-      result.set(mint, new Map());
-      liquidityTracker.set(mint, new Map());
-    }
+    if (!result.has(mint)) result.set(mint, new Map());
 
     const dexPrices = result.get(mint)!;
-    const dexLiquidity = liquidityTracker.get(mint)!;
-
-    const priceUsd = parseFloat(pair.priceUsd);
-    const liquidity = pair.liquidity?.usd ?? 0;
+    const existing = dexPrices.get(dexName);
 
     // Keep the highest-liquidity pool per DEX
-    if (liquidity > (dexLiquidity.get(dexName) ?? -1)) {
-      dexPrices.set(dexName, priceUsd);
-      dexLiquidity.set(dexName, liquidity);
+    if (!existing || liquidity > existing.liquidityUsd) {
+      dexPrices.set(dexName, { priceUsd: parseFloat(pair.priceUsd), liquidityUsd: liquidity });
     }
   }
 

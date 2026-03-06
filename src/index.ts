@@ -214,9 +214,10 @@ async function main(): Promise<void> {
     if (tokens.length === 0) return;
 
     const mints = tokens.map((t) => t.mint);
-    let dexPriceMap: Map<string, Map<string, number>>;
+    let dexPriceMap: Awaited<ReturnType<typeof getTokensDexPrices>>;
     try {
-      dexPriceMap = await getTokensDexPrices(mints);
+      // Only include pools with ≥$200K liquidity (eliminates junk pools with fake spreads)
+      dexPriceMap = await getTokensDexPrices(mints, 200_000);
     } catch (err) {
       logger.warn('Dashboard price refresh failed', { error: String(err) });
       return;
@@ -224,11 +225,11 @@ async function main(): Promise<void> {
 
     const rows: TokenDexPriceRow[] = [];
     for (const token of tokens) {
-      const pricesByDex = dexPriceMap.get(token.mint) ?? new Map<string, number>();
-      const prices: { dexId: string; priceUsd: number }[] = [];
+      const pricesByDex = dexPriceMap.get(token.mint) ?? new Map();
+      const prices: { dexId: string; priceUsd: number; liquidityUsd: number }[] = [];
 
-      for (const [dexName, priceUsd] of pricesByDex) {
-        prices.push({ dexId: dexName, priceUsd });
+      for (const [dexName, pool] of pricesByDex) {
+        prices.push({ dexId: dexName, priceUsd: pool.priceUsd, liquidityUsd: pool.liquidityUsd });
       }
 
       const usds = prices.map((p) => p.priceUsd);

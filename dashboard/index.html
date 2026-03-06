@@ -172,7 +172,7 @@
 
     <section>
       <h2>Token prices by DEX</h2>
-      <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 0.5rem 0;">Watchlist tokens with USD price per DEX from Jupiter quotes (0.01 SOL → token). All 7 supported DEXes are queried. Difference = spread between min and max. Status: Arb = spread ≥2%, Spread = ≥0.5%. Refreshes ~every 90s.</p>
+      <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 0.5rem 0;">Prices pulled directly from DexScreener pool data. Only pools with ≥$200K liquidity are shown (avoids fake spreads from illiquid pools). Liquidity shown below each price. Difference = spread between min and max price. Status: Arb = spread ≥2%, Spread = ≥0.5%. Refreshes every 60s.</p>
       <div style="overflow-x: auto;">
         <table>
           <thead>
@@ -315,16 +315,23 @@
       headerRow.innerHTML = '<th>Token</th>' +
         dexColumns.map(function (d) { return '<th>' + dexIdToLabel(d) + '</th>'; }).join('') +
         '<th>Difference</th><th>Status</th>';
-      const priceByDex = function (row, dexId) {
-        const p = (row.prices || []).find(function (x) { return x.dexId === dexId; });
-        return p != null ? p.priceUsd : null;
+      const poolByDex = function (row, dexId) {
+        return (row.prices || []).find(function (x) { return x.dexId === dexId; }) || null;
+      };
+      const formatLiq = function (usd) {
+        if (usd == null || usd <= 0) return '';
+        if (usd >= 1_000_000) return '$' + (usd / 1_000_000).toFixed(1) + 'M';
+        if (usd >= 1_000) return '$' + (usd / 1_000).toFixed(0) + 'K';
+        return '$' + usd.toFixed(0);
       };
       const tbody = document.getElementById('tokenDexBody');
       tbody.innerHTML = tokenDexPrices.map(function (r) {
         const token = r.token || {};
         const dexCells = dexColumns.map(function (dexId) {
-          const price = priceByDex(r, dexId);
-          return '<td class="mono">' + formatUsd(price) + '</td>';
+          const pool = poolByDex(r, dexId);
+          if (!pool) return '<td class="mono" style="color:var(--muted)">—</td>';
+          const liqHtml = pool.liquidityUsd ? '<div style="font-size:0.72rem;color:var(--muted);">' + formatLiq(pool.liquidityUsd) + '</div>' : '';
+          return '<td class="mono">' + formatUsd(pool.priceUsd) + liqHtml + '</td>';
         }).join('');
         const diff = r.spreadPct != null ? r.spreadPct.toFixed(2) + '%' : '—';
         const status = r.status || '—';
