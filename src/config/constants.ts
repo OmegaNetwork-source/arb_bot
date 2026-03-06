@@ -11,8 +11,8 @@ export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 /** USDT mint */
 export const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
-/** Jupiter v6 API base */
-export const JUPITER_API_BASE = 'https://quote-api.jup.ag/v6';
+/** Jupiter swap API base (v1 on new api.jup.ag gateway; old quote-api.jup.ag/v6 is being deprecated) */
+export const JUPITER_API_BASE = 'https://api.jup.ag/swap/v1';
 
 /** Jupiter price API (v3; v2 is deprecated) */
 export const JUPITER_PRICE_API = 'https://api.jup.ag/price/v3';
@@ -53,7 +53,7 @@ export const JITO_TIP_ACCOUNTS = [
 export const SUPPORTED_DEXES: DexConfig[] = [
   {
     name: 'Orca Whirlpools',
-    jupiterLabel: 'Orca V2',
+    jupiterLabel: 'Whirlpool',
     programId: 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
     enabled: true,
   },

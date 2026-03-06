@@ -10,6 +10,7 @@ export interface DexAggregatorConfig {
   jupiterApiUrl: string;
   slippageBps: number;
   tradeAmountSol: number;
+  jupiterApiKey?: string;
 }
 
 /**
@@ -23,6 +24,7 @@ export class DexAggregator {
       apiUrl: cfg.jupiterApiUrl,
       slippageBps: cfg.slippageBps,
       onlyDirectRoutes: true,
+      apiKey: cfg.jupiterApiKey,
     });
   }
 

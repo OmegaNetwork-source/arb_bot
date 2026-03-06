@@ -55,7 +55,8 @@ export const config = {
 
   // APIs (defaults work without keys)
   birdeyeApiKey: optional('BIRDEYE_API_KEY', ''),
-  jupiterApiUrl: optional('JUPITER_API_URL', 'https://quote-api.jup.ag/v6'),
+  jupiterApiUrl: optional('JUPITER_API_URL', 'https://api.jup.ag/swap/v1'),
+  jupiterApiKey: optional('JUPITER_API_KEY', ''),
 
   // Logging
   logLevel: optional('LOG_LEVEL', 'info'),

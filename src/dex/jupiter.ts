@@ -14,6 +14,7 @@ export interface JupiterClientConfig {
   apiUrl: string;
   slippageBps: number;
   onlyDirectRoutes?: boolean;
+  apiKey?: string;
 }
 
 export class JupiterClient {
@@ -21,15 +22,18 @@ export class JupiterClient {
   private priceClient: AxiosInstance;
 
   constructor(private readonly cfg: JupiterClientConfig) {
+    const authHeaders = cfg.apiKey ? { 'x-api-key': cfg.apiKey } : {};
+
     this.client = axios.create({
       baseURL: cfg.apiUrl,
       timeout: 15_000,
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...authHeaders },
     });
 
     this.priceClient = axios.create({
       baseURL: JUPITER_PRICE_API,
       timeout: 10_000,
+      headers: { ...authHeaders },
     });
 
     axiosRetry(this.client, {
@@ -192,13 +196,14 @@ export class JupiterClient {
   }
 
   /**
-   * Get token price in USDC.
+   * Get token price in USD via Jupiter Price API v3.
+   * Response format: { [mint]: { usdPrice: number, decimals: number, ... } }
    */
   async getTokenPriceUsdc(mint: string): Promise<number | null> {
     try {
       const resp = await this.priceClient.get('', { params: { ids: mint } });
-      const price = resp.data?.data?.[mint]?.price;
-      return price ? parseFloat(price) : null;
+      const price = resp.data?.[mint]?.usdPrice;
+      return price != null ? Number(price) : null;
     } catch {
       return null;
     }

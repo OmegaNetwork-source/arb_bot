@@ -63,6 +63,7 @@ async function main(): Promise<void> {
     jupiterApiUrl: config.jupiterApiUrl,
     slippageBps: config.maxSlippageBps,
     tradeAmountSol: config.tradeAmountSol,
+    jupiterApiKey: config.jupiterApiKey,
   });
 
   const detector = new ArbitrageDetector(dexAggregator, {
