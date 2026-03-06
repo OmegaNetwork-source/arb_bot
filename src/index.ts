@@ -232,6 +232,7 @@ async function main(): Promise<void> {
           token.mint,
           QUOTE_AMOUNT_LAMPORTS,
           dex.jupiterLabel,
+          false, // allow multi-hop routes for dashboard display
         );
         if (quote?.outAmount && BigInt(quote.outAmount) > 0n) {
           const outAmount = Number(quote.outAmount);

@@ -13,25 +13,33 @@ const client = axios.create({
   headers: { Accept: 'application/json' },
 });
 
-/** Fetch trending/boosted Solana token pairs */
+/**
+ * Fetch high-volume Solana token pairs using DexScreener search.
+ * Deliberately avoids the /token-boosts endpoint which returns paid-promoted
+ * meme coins regardless of legitimacy.
+ */
 export async function getTrendingPairs(): Promise<DexScreenerPair[]> {
-  try {
-    // Use the token-boosts endpoint for trending tokens
-    const resp = await client.get('/token-boosts/top/v1');
-    const boosts: Array<{ chainId: string; tokenAddress: string }> = resp.data ?? [];
+  // Use volume-based search across a broader set of query terms
+  const queries = ['BONK', 'WIF', 'BOME', 'TRUMP', 'FARTCOIN', 'MEW', 'POPCAT', 'PNUT', 'AI16Z', 'GRIFFAIN'];
+  const allPairs: DexScreenerPair[] = [];
 
-    const solanaMints = boosts
-      .filter((b) => b.chainId === 'solana')
-      .map((b) => b.tokenAddress)
-      .slice(0, 20);
-
-    if (solanaMints.length === 0) return [];
-
-    return await getTokenPairs(solanaMints);
-  } catch (err) {
-    logger.debug('getTrendingPairs failed, using search fallback', { error: String(err) });
-    return await searchSolanaPairs();
+  for (const q of queries) {
+    try {
+      const resp = await client.get<DexScreenerResponse>('/latest/dex/search', {
+        params: { q },
+      });
+      const pairs = (resp.data?.pairs ?? []).filter((p) => p.chainId === 'solana');
+      allPairs.push(...pairs);
+    } catch {
+      // continue
+    }
+    await sleep(200);
   }
+
+  return allPairs
+    .filter((p) => (p.volume?.h24 ?? 0) >= 50_000 && (p.liquidity?.usd ?? 0) >= 20_000)
+    .sort((a, b) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))
+    .slice(0, 40);
 }
 
 /** Search for active Solana pairs */
@@ -67,10 +75,14 @@ export async function getTokenPairs(mints: string[]): Promise<DexScreenerPair[]>
 /** Fetch top Solana tokens by volume using DexScreener search */
 export async function getTopSolanaTokensByVolume(limit = 50): Promise<DexScreenerPair[]> {
   try {
-    const queries = ['SOL', 'USDC', 'JUP', 'RAY', 'BONK', 'WIF', 'PYTH', 'JTO', 'ORCA', 'MSOL'];
+    const queries = [
+      'SOL', 'JUP', 'RAY', 'BONK', 'WIF', 'PYTH', 'JTO', 'ORCA', 'MSOL',
+      'RENDER', 'HNT', 'MOBILE', 'IOT', 'MNGO', 'STEP', 'SAMO', 'COPE',
+      'ATLAS', 'POLIS', 'SRM', 'FIDA', 'SLND', 'PORT', 'TULIP',
+    ];
     const allPairs: DexScreenerPair[] = [];
 
-    for (const q of queries.slice(0, 5)) {
+    for (const q of queries) {
       try {
         const resp = await client.get<DexScreenerResponse>('/latest/dex/search', {
           params: { q },
@@ -84,7 +96,7 @@ export async function getTopSolanaTokensByVolume(limit = 50): Promise<DexScreene
     }
 
     return allPairs
-      .filter((p) => (p.volume?.h24 ?? 0) > 10_000)
+      .filter((p) => (p.volume?.h24 ?? 0) >= 50_000 && (p.liquidity?.usd ?? 0) >= 10_000)
       .sort((a, b) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))
       .slice(0, limit);
   } catch (err) {

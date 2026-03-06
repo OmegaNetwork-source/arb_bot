@@ -52,18 +52,19 @@ export class JupiterClient {
     outputMint: string,
     amount: bigint,
     jupiterLabel?: string,
+    onlyDirectRoutesOverride?: boolean,
   ): Promise<JupiterQuoteResponse | null> {
     const params: Record<string, string | number | boolean> = {
       inputMint,
       outputMint,
       amount: amount.toString(),
       slippageBps: this.cfg.slippageBps,
-      onlyDirectRoutes: this.cfg.onlyDirectRoutes ?? true,
+      onlyDirectRoutes: onlyDirectRoutesOverride ?? this.cfg.onlyDirectRoutes ?? true,
     };
 
     if (jupiterLabel) {
-      // Jupiter API expects spaces as + in dexes (e.g. Orca+V2, Raydium+CLMM)
-      params.dexes = jupiterLabel.replace(/ /g, '+');
+      // Pass the label as-is; axios will percent-encode spaces to %20 correctly
+      params.dexes = jupiterLabel;
     }
 
     try {
@@ -92,12 +93,13 @@ export class JupiterClient {
     inputMint: string,
     outputMint: string,
     amount: bigint,
+    onlyDirectRoutesOverride?: boolean,
   ): Promise<QuoteResultOrError[]> {
     const enabledDexes = SUPPORTED_DEXES.filter((d) => d.enabled);
 
     const results = await Promise.allSettled(
       enabledDexes.map(async (dex): Promise<QuoteResultOrError> => {
-        const quote = await this.getQuote(inputMint, outputMint, amount, dex.jupiterLabel);
+        const quote = await this.getQuote(inputMint, outputMint, amount, dex.jupiterLabel, onlyDirectRoutesOverride);
 
         if (!quote || !quote.outAmount || BigInt(quote.outAmount) === 0n) {
           return {

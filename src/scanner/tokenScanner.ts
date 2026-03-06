@@ -114,22 +114,17 @@ export class TokenScanner extends EventEmitter {
 
     const newTokens: Array<{ token: Token; pairs: DexScreenerPair[]; source: string }> = [];
 
-    // 1. Fetch trending pairs (boosts/trending endpoint)
+    // 1. Fetch high-volume Solana pairs (volume-based, no paid boosts)
     try {
       const trendingPairs = await getTrendingPairs();
-      const activePairs = filterByMovement(
-        trendingPairs,
-        this.cfg.minPriceChangePct,
-        this.cfg.minVolume24h / 10, // Lower threshold for trending
-      );
-      const mints = extractTokenMints(activePairs);
+      const mints = extractTokenMints(trendingPairs);
 
       for (const mint of mints) {
         if (SKIP_MINTS.has(mint)) continue;
-        const pair = activePairs.find((p) => p.baseToken.address === mint);
+        const pair = trendingPairs.find((p) => p.baseToken.address === mint);
         if (!pair) continue;
         const token = pairToToken(pair);
-        newTokens.push({ token, pairs: activePairs.filter(p => p.baseToken.address === mint), source: 'trending' });
+        newTokens.push({ token, pairs: trendingPairs.filter(p => p.baseToken.address === mint), source: 'trending' });
       }
     } catch (err) {
       logger.debug('Trending fetch failed', { error: String(err) });
@@ -139,7 +134,7 @@ export class TokenScanner extends EventEmitter {
 
     // 2. Fetch top tokens by volume
     try {
-      const topPairs = await getTopSolanaTokensByVolume(30);
+      const topPairs = await getTopSolanaTokensByVolume(50);
       const mints = extractTokenMints(topPairs);
 
       for (const mint of mints) {
