@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arbitrage Bot — Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --surface: #151922;
+      --border: #252a36;
+      --text: #e6eaf0;
+      --muted: #8b92a0;
+      --accent: #00d4aa;
+      --accent-dim: #00a884;
+      --danger: #ff6b6b;
+      --success: #51cf66;
+      --warn: #ffd43b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+    h1 {
+      font-weight: 700;
+      font-size: 1.5rem;
+      margin: 0 0 1.5rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    h1 span.dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    h1 span.dot.live { background: var(--success); }
+    h1 span.dot.paused { background: var(--warn); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+    }
+    .card h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin: 0 0 0.5rem 0;
+    }
+    .card .value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .card .value.accent { color: var(--accent); }
+    .card .value.success { color: var(--success); }
+    .card .value.danger { color: var(--danger); }
+    .card .sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+    section {
+      margin-bottom: 1.5rem;
+    }
+    section h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0 0 0.75rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    th, td { padding: 0.6rem 1rem; text-align: left; }
+    th {
+      background: rgba(0,0,0,0.2);
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+    td.mono { font-family: 'JetBrains Mono', monospace; }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .badge.ok { background: rgba(81, 207, 102, 0.2); color: var(--success); }
+    .badge.fail { background: rgba(255, 107, 107, 0.2); color: var(--danger); }
+    .badge.arb { background: rgba(81, 207, 102, 0.2); color: var(--success); }
+    .badge.spread { background: rgba(255, 212, 59, 0.2); color: var(--warn); }
+    .updated { font-size: 0.75rem; color: var(--muted); margin-top: 1rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>
+      <span class="dot" id="statusDot"></span>
+      Solana Arbitrage Bot
+    </h1>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Status</h2>
+        <div class="value" id="statusText">—</div>
+        <div class="sub" id="walletShort">—</div>
+      </div>
+      <div class="card">
+        <h2>Wallet balance</h2>
+        <div class="value accent" id="balanceSol">—</div>
+        <div class="sub" id="balanceUsd">—</div>
+      </div>
+      <div class="card">
+        <h2>SOL price</h2>
+        <div class="value" id="solPrice">—</div>
+      </div>
+      <div class="card">
+        <h2>Uptime</h2>
+        <div class="value" id="uptime">—</div>
+      </div>
+      <div class="card">
+        <h2>Opportunities</h2>
+        <div class="value" id="opportunities">0</div>
+        <div class="sub">found</div>
+      </div>
+      <div class="card">
+        <h2>Trades</h2>
+        <div class="value" id="tradesSummary">0 / 0</div>
+        <div class="sub">success / fail</div>
+      </div>
+      <div class="card">
+        <h2>Net P&L</h2>
+        <div class="value" id="netPnl">—</div>
+        <div class="sub" id="dailyPnl">Daily: —</div>
+      </div>
+      <div class="card">
+        <h2>Watchlist</h2>
+        <div class="value" id="watchlistCount">0</div>
+        <div class="sub">tokens</div>
+      </div>
+    </div>
+
+    <section>
+      <h2>Token prices by DEX</h2>
+      <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 0.5rem 0;">Watchlist tokens with USD price per DEX from Jupiter quotes (0.01 SOL → token). All 7 supported DEXes are queried. Difference = spread between min and max. Status: Arb = spread ≥2%, Spread = ≥0.5%. Refreshes ~every 90s.</p>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr id="tokenDexHeader">
+              <th>Token</th>
+              <th colspan="0" id="dexColsPlaceholder">—</th>
+              <th>Difference</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="tokenDexBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recent opportunities</h2>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Token</th>
+              <th>Buy → Sell</th>
+              <th>Net profit (SOL)</th>
+              <th>%</th>
+            </tr>
+          </thead>
+          <tbody id="opportunitiesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recent trades</h2>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Token</th>
+              <th>Result</th>
+              <th>Profit (SOL)</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="updated">Last updated: <span id="lastUpdated">—</span> · Polling every 3s</p>
+  </div>
+
+  <script>
+    const POLL_MS = 3000;
+
+    function shortKey(str) {
+      if (!str) return '—';
+      return str.slice(0, 4) + '…' + str.slice(-4);
+    }
+
+    function formatSol(n) {
+      if (n == null || n === undefined) return '—';
+      return Number(n).toFixed(6) + ' SOL';
+    }
+
+    function formatTime(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toLocaleTimeString() + ' ' + d.toLocaleDateString();
+    }
+
+    function uptimeStr(startTime) {
+      if (!startTime) return '—';
+      const s = Math.floor((Date.now() - startTime) / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return h + 'h ' + m + 'm';
+    }
+
+    function dexIdToLabel(dexId) {
+      return (dexId || '')
+        .split(/[-_]/)
+        .map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(); })
+        .join(' ');
+    }
+
+    function formatUsd(n) {
+      if (n == null || n === undefined || isNaN(n)) return '—';
+      if (n >= 1) return '$' + n.toFixed(4);
+      if (n > 0) return '$' + n.toFixed(6);
+      return '—';
+    }
+
+    function render(data) {
+      const dot = document.getElementById('statusDot');
+      const statusText = document.getElementById('statusText');
+      if (data.paused) {
+        dot.className = 'dot paused';
+        statusText.textContent = 'Paused (circuit breaker)';
+      } else {
+        dot.className = 'dot live';
+        statusText.textContent = 'Running';
+      }
+
+      document.getElementById('walletShort').textContent = data.walletAddress
+        ? shortKey(data.walletAddress)
+        : '—';
+      document.getElementById('balanceSol').textContent =
+        data.walletBalanceSol != null ? formatSol(data.walletBalanceSol) : '—';
+      const solPrice = data.solPriceUsd != null ? Number(data.solPriceUsd) : null;
+      document.getElementById('solPrice').textContent =
+        solPrice != null ? '$' + solPrice.toFixed(2) : '—';
+      if (data.walletBalanceSol != null && solPrice != null) {
+        document.getElementById('balanceUsd').textContent =
+          '$' + (data.walletBalanceSol * solPrice).toFixed(2) + ' equiv';
+      } else {
+        document.getElementById('balanceUsd').textContent = '—';
+      }
+
+      const m = data.metrics || {};
+      document.getElementById('uptime').textContent = uptimeStr(m.startTime);
+      document.getElementById('opportunities').textContent = m.totalOpportunitiesFound ?? 0;
+      document.getElementById('tradesSummary').textContent =
+        (m.totalTradesSucceeded ?? 0) + ' / ' + (m.totalTradesFailed ?? 0);
+      document.getElementById('watchlistCount').textContent = data.watchlistCount ?? 0;
+
+      const netPnl = (m.totalProfitSol ?? 0) - (m.totalFeesSol ?? 0);
+      const pnlEl = document.getElementById('netPnl');
+      pnlEl.textContent = formatSol(netPnl);
+      pnlEl.className = 'value ' + (netPnl >= 0 ? 'success' : 'danger');
+      const daily = data.dailyPnl != null ? data.dailyPnl : (m.dailyPnl ?? 0);
+      document.getElementById('dailyPnl').textContent = 'Daily: ' + formatSol(daily);
+
+      // Token prices by DEX
+      const dexColumns = data.dexColumns || [];
+      const tokenDexPrices = data.tokenDexPrices || [];
+      const headerRow = document.getElementById('tokenDexHeader');
+      headerRow.innerHTML = '<th>Token</th>' +
+        dexColumns.map(function (d) { return '<th>' + dexIdToLabel(d) + '</th>'; }).join('') +
+        '<th>Difference</th><th>Status</th>';
+      const priceByDex = function (row, dexId) {
+        const p = (row.prices || []).find(function (x) { return x.dexId === dexId; });
+        return p != null ? p.priceUsd : null;
+      };
+      const tbody = document.getElementById('tokenDexBody');
+      tbody.innerHTML = tokenDexPrices.map(function (r) {
+        const token = r.token || {};
+        const dexCells = dexColumns.map(function (dexId) {
+          const price = priceByDex(r, dexId);
+          return '<td class="mono">' + formatUsd(price) + '</td>';
+        }).join('');
+        const diff = r.spreadPct != null ? r.spreadPct.toFixed(2) + '%' : '—';
+        const status = r.status || '—';
+        const statusClass = status === 'Arb' ? 'arb' : status === 'Spread' ? 'spread' : '';
+        const statusHtml = status !== '—' ? '<span class="badge ' + statusClass + '">' + status + '</span>' : '—';
+        return '<tr><td><strong>' + (token.symbol || token.mint || '—') + '</strong></td>' + dexCells + '<td class="mono">' + diff + '</td><td>' + statusHtml + '</td></tr>';
+      }).join('') || '<tr><td colspan="' + (dexColumns.length + 3) + '">No token data yet. Wait for next watchlist refresh.</td></tr>';
+
+      // Recent opportunities
+      const opps = data.recentOpportunities || [];
+      const oppBody = document.getElementById('opportunitiesBody');
+      oppBody.innerHTML = opps.slice(0, 20).map(o => `
+        <tr>
+          <td class="mono">${formatTime(o.detectedAt)}</td>
+          <td>${(o.token && o.token.symbol) || '—'}</td>
+          <td>${o.buyDex || '—'} → ${o.sellDex || '—'}</td>
+          <td class="mono">${formatSol(o.netProfitSol)}</td>
+          <td class="mono">${((o.profitPct ?? 0) * 100).toFixed(3)}%</td>
+        </tr>
+      `).join('') || '<tr><td colspan="5">No opportunities yet</td></tr>';
+
+      // Recent trades
+      const trades = data.recentTrades || [];
+      const tradesBody = document.getElementById('tradesBody');
+      tradesBody.innerHTML = trades.slice(0, 20).map(t => `
+        <tr>
+          <td class="mono">${formatTime(t.executedAt)}</td>
+          <td>${t.tokenSymbol || '—'}</td>
+          <td><span class="badge ${t.success ? 'ok' : 'fail'}">${t.success ? 'OK' : 'FAIL'}</span></td>
+          <td class="mono">${t.success ? formatSol(t.actualProfitSol) : '—'}</td>
+          <td class="mono" style="font-size:0.75rem;">${t.errorMessage || (t.bundleId ? 'Bundle: ' + shortKey(t.bundleId) : '—')}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="5">No trades yet</td></tr>';
+
+      document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+    }
+
+    function poll() {
+      fetch('/api/state')
+        .then(r => r.json())
+        .then(render)
+        .catch(() => render({}));
+    }
+
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>

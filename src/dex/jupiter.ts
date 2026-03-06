@@ -1,0 +1,206 @@
+import axios, { AxiosInstance } from 'axios';
+import axiosRetry from 'axios-retry';
+import {
+  JupiterQuoteResponse,
+  JupiterSwapResponse,
+  QuoteResult,
+  QuoteError,
+  QuoteResultOrError,
+} from '../types';
+import { SUPPORTED_DEXES, JUPITER_PRICE_API, WSOL_MINT, COINGECKO_SOL_PRICE_URL } from '../config/constants';
+import { logger } from '../utils/logger';
+
+export interface JupiterClientConfig {
+  apiUrl: string;
+  slippageBps: number;
+  onlyDirectRoutes?: boolean;
+}
+
+export class JupiterClient {
+  private client: AxiosInstance;
+  private priceClient: AxiosInstance;
+
+  constructor(private readonly cfg: JupiterClientConfig) {
+    this.client = axios.create({
+      baseURL: cfg.apiUrl,
+      timeout: 15_000,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    });
+
+    this.priceClient = axios.create({
+      baseURL: JUPITER_PRICE_API,
+      timeout: 10_000,
+    });
+
+    axiosRetry(this.client, {
+      retries: 2,
+      retryDelay: (count) => count * 300,
+      retryCondition: (err) => !err.response || err.response.status >= 500,
+    });
+  }
+
+  /**
+   * Get a quote from a specific DEX (or all DEXes if jupiterLabel is undefined).
+   * Uses Jupiter's /quote endpoint with the `dexes` filter.
+   */
+  async getQuote(
+    inputMint: string,
+    outputMint: string,
+    amount: bigint,
+    jupiterLabel?: string,
+  ): Promise<JupiterQuoteResponse | null> {
+    const params: Record<string, string | number | boolean> = {
+      inputMint,
+      outputMint,
+      amount: amount.toString(),
+      slippageBps: this.cfg.slippageBps,
+      onlyDirectRoutes: this.cfg.onlyDirectRoutes ?? true,
+    };
+
+    if (jupiterLabel) {
+      // Jupiter API expects spaces as + in dexes (e.g. Orca+V2, Raydium+CLMM)
+      params.dexes = jupiterLabel.replace(/ /g, '+');
+    }
+
+    try {
+      const resp = await this.client.get<JupiterQuoteResponse>('/quote', { params });
+      return resp.data;
+    } catch (err: any) {
+      if (err.response?.status === 400) {
+        // No route found — normal for some DEX/token combos
+        return null;
+      }
+      logger.debug('Jupiter quote failed', {
+        dex: jupiterLabel ?? 'all',
+        inputMint,
+        outputMint,
+        error: err.message,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get quotes from ALL supported DEXes simultaneously for a given token pair.
+   * Returns an array of QuoteResult | QuoteError for each DEX.
+   */
+  async getAllDexQuotes(
+    inputMint: string,
+    outputMint: string,
+    amount: bigint,
+  ): Promise<QuoteResultOrError[]> {
+    const enabledDexes = SUPPORTED_DEXES.filter((d) => d.enabled);
+
+    const results = await Promise.allSettled(
+      enabledDexes.map(async (dex): Promise<QuoteResultOrError> => {
+        const quote = await this.getQuote(inputMint, outputMint, amount, dex.jupiterLabel);
+
+        if (!quote || !quote.outAmount || BigInt(quote.outAmount) === 0n) {
+          return {
+            dexName: dex.name,
+            jupiterLabel: dex.jupiterLabel,
+            error: 'No route or zero output',
+            success: false,
+          } satisfies QuoteError;
+        }
+
+        return {
+          dexName: dex.name,
+          jupiterLabel: dex.jupiterLabel,
+          inputMint,
+          outputMint,
+          inputAmount: amount,
+          outputAmount: BigInt(quote.outAmount),
+          priceImpactPct: parseFloat(quote.priceImpactPct),
+          routePlan: quote.routePlan,
+          rawResponse: quote,
+          fetchedAt: Date.now(),
+          success: true,
+        } satisfies QuoteResult;
+      }),
+    );
+
+    return results.map((r, i): QuoteResultOrError => {
+      if (r.status === 'fulfilled') return r.value;
+      return {
+        dexName: enabledDexes[i].name,
+        jupiterLabel: enabledDexes[i].jupiterLabel,
+        error: String(r.reason),
+        success: false,
+      };
+    });
+  }
+
+  /**
+   * Get a swap transaction for a given quote.
+   * Returns base64-encoded versioned transaction.
+   */
+  async getSwapTransaction(
+    quoteResponse: JupiterQuoteResponse,
+    userPublicKey: string,
+    priorityFeeMicroLamports: number,
+  ): Promise<JupiterSwapResponse | null> {
+    try {
+      const resp = await this.client.post<JupiterSwapResponse>('/swap', {
+        quoteResponse,
+        userPublicKey,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        prioritizationFeeLamports: {
+          jitoTipLamports: undefined, // We handle Jito tips separately
+        },
+        computeUnitPriceMicroLamports: priorityFeeMicroLamports,
+        asLegacyTransaction: false,
+      });
+      return resp.data;
+    } catch (err: any) {
+      logger.error('Jupiter swap transaction failed', {
+        error: err.message,
+        quoteInputMint: quoteResponse.inputMint,
+        quoteOutputMint: quoteResponse.outputMint,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get current SOL price in USD. Tries CoinGecko first (no key, reliable), then Jupiter, then fallback.
+   */
+  async getSolPriceUsdc(): Promise<number> {
+    // 1. CoinGecko first (no auth, stable) — use axios directly with full URL
+    try {
+      const cg = await axios.get<{ solana?: { usd?: number } }>(COINGECKO_SOL_PRICE_URL, {
+        timeout: 8_000,
+      });
+      const price = cg.data?.solana?.usd;
+      if (price != null && price > 0) return price;
+    } catch {
+      // continue
+    }
+    // 2. Jupiter Price API v3
+    try {
+      const resp = await this.priceClient.get<Record<string, { usdPrice?: number }>>('', {
+        params: { ids: WSOL_MINT },
+      });
+      const solData = resp.data?.[WSOL_MINT];
+      const price = solData?.usdPrice;
+      if (price != null && price > 0) return price;
+    } catch {
+      // ignore
+    }
+    return 150; // last-resort fallback
+  }
+
+  /**
+   * Get token price in USDC.
+   */
+  async getTokenPriceUsdc(mint: string): Promise<number | null> {
+    try {
+      const resp = await this.priceClient.get('', { params: { ids: mint } });
+      const price = resp.data?.data?.[mint]?.price;
+      return price ? parseFloat(price) : null;
+    } catch {
+      return null;
+    }
+  }
+}

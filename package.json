@@ -1,0 +1,31 @@
+{
+  "name": "solana-arbitrage-bot",
+  "version": "1.0.0",
+  "description": "Comprehensive Solana DEX arbitrage bot — Jupiter, Orca, Raydium, Meteora",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "dev:watch": "nodemon --exec ts-node src/index.ts --ext ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.3",
+    "axios": "^1.7.7",
+    "axios-retry": "^4.5.0",
+    "bs58": "^6.0.0",
+    "bn.js": "^5.2.1",
+    "dotenv": "^16.4.5",
+    "winston": "^3.14.2",
+    "winston-daily-rotate-file": "^5.0.0",
+    "p-limit": "^6.1.0",
+    "bottleneck": "^2.19.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "ts-node": "^10.9.2",
+    "@types/node": "^22.7.5",
+    "@types/bn.js": "^5.1.6",
+    "nodemon": "^3.1.7"
+  }
+}
