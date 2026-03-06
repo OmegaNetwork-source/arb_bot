@@ -216,8 +216,9 @@ async function main(): Promise<void> {
     const mints = tokens.map((t) => t.mint);
     let dexPriceMap: Awaited<ReturnType<typeof getTokensDexPrices>>;
     try {
-      // Only include pools with ≥$200K liquidity (eliminates junk pools with fake spreads)
-      dexPriceMap = await getTokensDexPrices(mints, 200_000);
+      // $10K min liquidity for display — shows all real pools like DexScreener does.
+      // Arb execution separately enforces higher liquidity via trade size limits.
+      dexPriceMap = await getTokensDexPrices(mints, 10_000);
     } catch (err) {
       logger.warn('Dashboard price refresh failed', { error: String(err) });
       return;

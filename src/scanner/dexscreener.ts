@@ -6,19 +6,48 @@ import { logger } from '../utils/logger';
 import { chunk, sleep } from '../utils/helpers';
 
 /**
- * Maps DexScreener dexId values to our canonical DEX display names.
- * These are the actual dexId strings DexScreener returns for Solana.
+ * Known DexScreener dexId → display name overrides.
+ * Any dexId NOT in this map is still shown; we just auto-format the raw id.
  */
 const DEXSCREENER_ID_TO_NAME: Record<string, string> = {
-  orca:          'Orca Whirlpools',
-  raydium:       'Raydium AMM',
-  'raydium-clmm': 'Raydium CLMM',
-  'meteora-dlmm': 'Meteora DLMM',
-  meteora:       'Meteora AMM',
-  'lifinity-v2': 'Lifinity V2',
-  lifinity:      'Lifinity V2',
-  phoenix:       'Phoenix',
+  orca:                'Orca Whirlpools',
+  raydium:             'Raydium AMM',
+  'raydium-clmm':      'Raydium CLMM',
+  'meteora-dlmm':      'Meteora DLMM',
+  meteora:             'Meteora AMM',
+  'lifinity-v2':       'Lifinity V2',
+  lifinity:            'Lifinity V2',
+  phoenix:             'Phoenix',
+  'orca-whirlpool':    'Orca Whirlpools',
+  'raydium-amm':       'Raydium AMM',
+  'meteora-amm':       'Meteora AMM',
+  'pump-fun-amm':      'Pump AMM',
+  'pump.fun':          'Pump AMM',
+  pumpfun:             'Pump AMM',
+  'fluxbeam':          'FluxBeam',
+  'saber':             'Saber',
+  'aldrin':            'Aldrin',
+  'crema':             'Crema',
+  'invariant':         'Invariant',
+  'dradex':            'DraDEX',
+  'openbook':          'OpenBook',
+  'openbook-v2':       'OpenBook V2',
 };
+
+/** Convert a raw DexScreener dexId to a human-readable display label */
+function dexIdToDisplayName(dexId: string): string {
+  return (
+    DEXSCREENER_ID_TO_NAME[dexId] ??
+    dexId
+      .split(/[-_]/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  );
+}
+
+/** Quote tokens we accept for clean USD pricing */
+const VALID_QUOTE_SYMBOLS = new Set(['SOL', 'USDC', 'USDT', 'WSOL']);
+const VALID_QUOTE_MINTS = new Set([WSOL_MINT, USDC_MINT]);
 
 axiosRetry(axios, { retries: 3, retryDelay: axiosRetry.exponentialDelay });
 
@@ -65,23 +94,40 @@ async function searchSolanaPairs(): Promise<DexScreenerPair[]> {
   return (resp.data?.pairs ?? []).filter((p) => p.chainId === 'solana');
 }
 
-/** Fetch all DEX pairs for a list of token mint addresses */
+/**
+ * Fetch all DEX pairs for a list of token mint addresses.
+ * Uses the v1 endpoint (300 req/min, returns array directly).
+ */
 export async function getTokenPairs(mints: string[]): Promise<DexScreenerPair[]> {
   const results: DexScreenerPair[] = [];
-  // DexScreener supports up to 30 tokens per request
+  // Up to 30 tokens per request
   const batches = chunk(mints, 30);
 
   for (const batch of batches) {
     try {
-      const resp = await client.get<DexScreenerResponse>(
-        `/latest/dex/tokens/${batch.join(',')}`,
+      // v1 endpoint: returns array directly (not wrapped in {pairs: []})
+      const resp = await client.get<DexScreenerPair[]>(
+        `/tokens/v1/solana/${batch.join(',')}`,
       );
-      const pairs = resp.data?.pairs ?? [];
-      results.push(...pairs.filter((p) => p.chainId === 'solana'));
+      const pairs = Array.isArray(resp.data) ? resp.data : [];
+      results.push(...pairs);
     } catch (err) {
-      logger.debug('getTokenPairs batch failed', { batch: batch.slice(0, 3), error: String(err) });
+      logger.debug('getTokenPairs v1 batch failed, falling back', {
+        batch: batch.slice(0, 3),
+        error: String(err),
+      });
+      // Fallback to legacy endpoint
+      try {
+        const resp = await client.get<DexScreenerResponse>(
+          `/latest/dex/tokens/${batch.join(',')}`,
+        );
+        const pairs = resp.data?.pairs ?? [];
+        results.push(...pairs.filter((p) => p.chainId === 'solana'));
+      } catch {
+        // continue
+      }
     }
-    if (batches.length > 1) await sleep(300); // rate limiting
+    if (batches.length > 1) await sleep(200);
   }
 
   return results;
@@ -167,23 +213,27 @@ export interface PoolPrice {
 }
 
 /**
- * Batch-fetch per-DEX prices for a list of token mints directly from
- * DexScreener pair data. No Jupiter API calls required.
+ * Batch-fetch per-DEX prices for a list of token mints from DexScreener.
+ * No Jupiter API calls required — uses DexScreener pair data directly.
  *
- * Returns: mint → (dexName → PoolPrice)
+ * Returns: mint → (dexDisplayName → PoolPrice)
  *
  * Rules:
- *  - Only SOL or USDC quote pairs (clean USD pricing)
- *  - Only pools with at least `minLiquidityUsd` (default $200K)
- *  - When a token has multiple pools on the same DEX, the highest-liquidity one wins
+ *  - Quote token must be SOL, USDC, or USDT (for clean USD pricing)
+ *  - Only pools with at least `minLiquidityUsd` (default $10K for display)
+ *  - Unknown dexIds are auto-formatted (never silently dropped)
+ *  - When a token has multiple pools on the same DEX, highest-liquidity wins
  */
 export async function getTokensDexPrices(
   mints: string[],
-  minLiquidityUsd = 200_000,
+  minLiquidityUsd = 10_000,
 ): Promise<Map<string, Map<string, PoolPrice>>> {
   const result = new Map<string, Map<string, PoolPrice>>();
 
   const pairs = await getTokenPairs(mints);
+
+  // Log unknown dexIds in debug mode so we can extend the mapping
+  const unknownDexIds = new Set<string>();
 
   for (const pair of pairs) {
     if (!pair.priceUsd) continue;
@@ -191,17 +241,16 @@ export async function getTokensDexPrices(
     const liquidity = pair.liquidity?.usd ?? 0;
     if (liquidity < minLiquidityUsd) continue;
 
-    const dexName = DEXSCREENER_ID_TO_NAME[pair.dexId];
-    if (!dexName) continue;
-
-    // Only price vs SOL or USDC quote tokens for clean USD pricing
+    // Accept SOL, USDC, or USDT quote tokens
     const quoteAddr = pair.quoteToken.address;
+    const quoteSymbol = pair.quoteToken.symbol?.toUpperCase() ?? '';
     const isRelevantQuote =
-      quoteAddr === WSOL_MINT ||
-      quoteAddr === USDC_MINT ||
-      pair.quoteToken.symbol === 'SOL' ||
-      pair.quoteToken.symbol === 'USDC';
+      VALID_QUOTE_MINTS.has(quoteAddr) ||
+      VALID_QUOTE_SYMBOLS.has(quoteSymbol);
     if (!isRelevantQuote) continue;
+
+    if (!DEXSCREENER_ID_TO_NAME[pair.dexId]) unknownDexIds.add(pair.dexId);
+    const dexName = dexIdToDisplayName(pair.dexId);
 
     const mint = pair.baseToken.address;
     if (!result.has(mint)) result.set(mint, new Map());
@@ -213,6 +262,12 @@ export async function getTokensDexPrices(
     if (!existing || liquidity > existing.liquidityUsd) {
       dexPrices.set(dexName, { priceUsd: parseFloat(pair.priceUsd), liquidityUsd: liquidity });
     }
+  }
+
+  if (unknownDexIds.size > 0) {
+    logger.debug('DexScreener: unmapped dexIds (auto-formatted)', {
+      ids: Array.from(unknownDexIds),
+    });
   }
 
   return result;

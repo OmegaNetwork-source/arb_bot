@@ -5,7 +5,6 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { getDashboardState } from './state';
-import { SUPPORTED_DEXES } from '../config/constants';
 
 const DASHBOARD_DIR = path.join(process.cwd(), 'dashboard');
 
@@ -38,8 +37,20 @@ export function startDashboardServer(port: number): void {
 
     if (pathname === '/api/status' || pathname === '/api/state') {
       const state = getDashboardState();
-      // Fixed DEX columns from our supported list (same order every time)
-      const dexColumns = SUPPORTED_DEXES.filter((d) => d.enabled).map((d) => d.name);
+      // Build DEX columns dynamically from actual pool data so we show
+      // every DEX that has real liquidity, not just our hardcoded 7.
+      // Sort: well-known DEXes first in a preferred order, then alphabetical.
+      const PREFERRED_ORDER = [
+        'Orca Whirlpools', 'Raydium AMM', 'Raydium CLMM',
+        'Meteora DLMM', 'Meteora AMM', 'Lifinity V2', 'Phoenix',
+      ];
+      const allDexNames = Array.from(
+        new Set(state.tokenDexPrices.flatMap((r) => r.prices.map((p) => p.dexId))),
+      );
+      const dexColumns = [
+        ...PREFERRED_ORDER.filter((n) => allDexNames.includes(n)),
+        ...allDexNames.filter((n) => !PREFERRED_ORDER.includes(n)).sort(),
+      ];
       // Slim down for client (omit large quote objects)
       const slim = {
         walletAddress: state.walletAddress,
