@@ -95,39 +95,25 @@ async function searchSolanaPairs(): Promise<DexScreenerPair[]> {
 }
 
 /**
- * Fetch all DEX pairs for a list of token mint addresses.
- * Uses the v1 endpoint (300 req/min, returns array directly).
+ * Fetch ALL DEX pairs for a list of token mint addresses.
+ * Uses /latest/dex/tokens/ which returns every pool for each token.
+ * (The newer /tokens/v1/ endpoint only returns the single top pair per token.)
  */
 export async function getTokenPairs(mints: string[]): Promise<DexScreenerPair[]> {
   const results: DexScreenerPair[] = [];
-  // Up to 30 tokens per request
   const batches = chunk(mints, 30);
 
   for (const batch of batches) {
     try {
-      // v1 endpoint: returns array directly (not wrapped in {pairs: []})
-      const resp = await client.get<DexScreenerPair[]>(
-        `/tokens/v1/solana/${batch.join(',')}`,
+      const resp = await client.get<DexScreenerResponse>(
+        `/latest/dex/tokens/${batch.join(',')}`,
       );
-      const pairs = Array.isArray(resp.data) ? resp.data : [];
-      results.push(...pairs);
+      const pairs = resp.data?.pairs ?? [];
+      results.push(...pairs.filter((p) => p.chainId === 'solana'));
     } catch (err) {
-      logger.debug('getTokenPairs v1 batch failed, falling back', {
-        batch: batch.slice(0, 3),
-        error: String(err),
-      });
-      // Fallback to legacy endpoint
-      try {
-        const resp = await client.get<DexScreenerResponse>(
-          `/latest/dex/tokens/${batch.join(',')}`,
-        );
-        const pairs = resp.data?.pairs ?? [];
-        results.push(...pairs.filter((p) => p.chainId === 'solana'));
-      } catch {
-        // continue
-      }
+      logger.debug('getTokenPairs batch failed', { batch: batch.slice(0, 3), error: String(err) });
     }
-    if (batches.length > 1) await sleep(200);
+    if (batches.length > 1) await sleep(300);
   }
 
   return results;

@@ -196,14 +196,14 @@ export class JupiterClient {
     } catch {
       // continue
     }
-    // 2. Jupiter Price API v3
+    // 2. Jupiter Price API v3 — response shape: {data: {[mint]: {price: "145.23"}}}
     try {
-      const resp = await this.priceClient.get<Record<string, { usdPrice?: number }>>('', {
+      const resp = await this.priceClient.get<{ data?: Record<string, { price?: string }> }>('', {
         params: { ids: WSOL_MINT },
       });
-      const solData = resp.data?.[WSOL_MINT];
-      const price = solData?.usdPrice;
-      if (price != null && price > 0) return price;
+      const raw = resp.data?.data?.[WSOL_MINT]?.price;
+      const price = raw != null ? parseFloat(raw) : NaN;
+      if (!isNaN(price) && price > 0) return price;
     } catch {
       // ignore
     }
@@ -216,9 +216,12 @@ export class JupiterClient {
    */
   async getTokenPriceUsdc(mint: string): Promise<number | null> {
     try {
-      const resp = await this.priceClient.get('', { params: { ids: mint } });
-      const price = resp.data?.[mint]?.usdPrice;
-      return price != null ? Number(price) : null;
+      const resp = await this.priceClient.get<{ data?: Record<string, { price?: string }> }>('', {
+        params: { ids: mint },
+      });
+      const raw = resp.data?.data?.[mint]?.price;
+      const price = raw != null ? parseFloat(raw) : NaN;
+      return !isNaN(price) && price > 0 ? price : null;
     } catch {
       return null;
     }
